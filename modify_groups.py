@@ -4,8 +4,8 @@ import argparse
 import urllib.parse
 import time
 
-BASE_URL = 'https://ui.kotpc.h.lennut.ru'
 TOKEN = 'YOUR_TOKEN_HERE'
+BASE_URL = None
 
 headers = {
     'accept': 'application/json',
@@ -16,6 +16,8 @@ headers = {
 
 def parse_args():
     parser = argparse.ArgumentParser(description='Update model ACLs')
+    parser.add_argument('--url', type=str, required=True,
+                      help='Base URL of the API (e.g., https://example.com)')
     parser.add_argument('--show-disabled', action='store_true',
                       help='Show disabled models in the list')
     parser.add_argument('--token', type=str, help='API token')
@@ -178,8 +180,10 @@ def main():
     args = parse_args()
     
     # Configure global variables
+    global BASE_URL, TOKEN, headers
+    BASE_URL = args.url.rstrip('/')  # Remove trailing slash if present
+    
     if args.token:
-        global TOKEN, headers
         TOKEN = args.token
         headers['authorization'] = f'Bearer {TOKEN}'
         headers['cookie'] = f'token={TOKEN}'
