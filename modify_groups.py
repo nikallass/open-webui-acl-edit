@@ -4,7 +4,7 @@ import argparse
 import urllib.parse
 import time
 
-BASE_URL = 'https://ui.kotpc.h.lennut.ru'
+BASE_URL = 'https://URL'
 TOKEN = 'YOUR_TOKEN_HERE'
 
 headers = {
