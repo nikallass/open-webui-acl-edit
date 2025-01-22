@@ -1,6 +1,8 @@
 import requests
 import json
 import argparse
+import urllib.parse
+import time
 
 BASE_URL = 'https://ui.kotpc.h.lennut.ru'
 TOKEN = 'YOUR_TOKEN_HERE'
@@ -12,11 +14,6 @@ headers = {
     'cookie': f'token={TOKEN}'
 }
 
-proxies = {
-    'http': 'http://127.0.0.1:2080',
-    'https': 'http://127.0.0.1:2080'
-}
-
 def parse_args():
     parser = argparse.ArgumentParser(description='Update model ACLs')
     parser.add_argument('--show-disabled', action='store_true',
@@ -26,6 +23,8 @@ def parse_args():
                       help='Replace existing group access instead of appending')
     parser.add_argument('--debug', action='store_true',
                       help='Show debug information including API requests and responses')
+    parser.add_argument('--proxy', type=str,
+                      help='Proxy URL (e.g., http://127.0.0.1:8080)')
     return parser.parse_args()
 
 def parse_range_string(range_str, max_value):
@@ -79,13 +78,12 @@ def get_models(show_disabled=False):
         model_info = model.get('info', {})
         is_active = model_info.get('is_active', True)
         if show_disabled or is_active:
-            # Создаем базовый access_control если он отсутствует или равен None
+
             default_access_control = {
                 'read': {'group_ids': [], 'user_ids': []},
                 'write': {'group_ids': [], 'user_ids': []}
             }
             
-            # Получаем access_control из модели или info, или используем значение по умолчанию
             access_control = (model.get('access_control') or 
                             model_info.get('access_control') or 
                             default_access_control)
@@ -145,14 +143,21 @@ def update_model_acl(model, new_group_ids, replace=False, debug=False):
         'write': {'group_ids': [], 'user_ids': []}
     }
     
+    # Добавляем текущее время для updated_at и created_at
+    current_timestamp = int(time.time())
+    model_data.update({
+        'updated_at': current_timestamp,
+        'created_at': current_timestamp
+    })
+    
     if debug:
         print(f"\nSending update request for {model_data['name']}:")
-        print(f"Request URL: {BASE_URL}/api/v1/models/create")
+        print(f"Request URL: {BASE_URL}/api/v1/models/model/update?id={urllib.parse.quote(model['id'])}")
         print("Request payload:")
         print(json.dumps(model_data, indent=2))
     
     response = requests.post(
-        f'{BASE_URL}/api/v1/models/create',
+        f"{BASE_URL}/api/v1/models/model/update?id={urllib.parse.quote(model['id'])}",
         headers=headers,
         json=model_data,
         proxies=proxies
@@ -161,28 +166,33 @@ def update_model_acl(model, new_group_ids, replace=False, debug=False):
     if debug:
         print(f"Response status: {response.status_code}")
         print("Response body:")
-    
-    try:
-        response_json = response.json()
-        if debug:
-            print(json.dumps(response_json, indent=2))
-        if (response.status_code == 401 and
-            isinstance(response_json, dict) and
-            ('already registered' in response_json.get('detail', ''))):
-            return False, read_group_ids, "Already exists"
-    except:
-        if debug:
+        try:
+            print(json.dumps(response.json(), indent=2))
+        except:
             print(response.text)
     
-    return response.status_code == 200, read_group_ids, "Success" if response.status_code == 200 else "Failed"
+    success = response.status_code == 200
+    return success, read_group_ids, "Success" if success else "Failed"
 
 def main():
     args = parse_args()
+    
+    # Configure global variables
     if args.token:
         global TOKEN, headers
         TOKEN = args.token
         headers['authorization'] = f'Bearer {TOKEN}'
         headers['cookie'] = f'token={TOKEN}'
+    
+    # Configure proxies
+    global proxies
+    if args.proxy:
+        proxies = {
+            'http': args.proxy,
+            'https': args.proxy
+        }
+    else:
+        proxies = None # Default no proxy
 
     try:
         print("Fetching groups..." if args.debug else "", end="")
@@ -235,7 +245,7 @@ def main():
         current_groups = [groups_lookup.get(gid, gid)
                          for gid in access_control.get('read', {}).get('group_ids', [])]
         groups_info = f" (Current groups: {', '.join(current_groups)})" if current_groups else ""
-        print(f"{i}. {model['name']}{status}{groups_info}")
+        print(f"{i}. [{model['id']}] {model['name']}{status}{groups_info}")
     
     # Get model selection
     while True:
@@ -246,7 +256,7 @@ def main():
         
         try:
             model_numbers = parse_range_string(model_input, len(models))
-            # Сохраняем кортежи (номер_модели, модель)
+            # Save tuples (model_num, model)
             selected_models = [(i, models[i-1]) for i in model_numbers]
             break
         except ValueError as e:
@@ -265,7 +275,7 @@ def main():
         current_groups = [groups_lookup.get(gid, gid)
                          for gid in model.get('access_control', {}).get('read', {}).get('group_ids', [])]
         groups_info = f" (Current groups: {', '.join(current_groups)})" if current_groups else ""
-        print(f"- [{i}] {model['name']}{status}{groups_info}")
+        print(f"- [{i}] [{model['id']}] {model['name']}{status}{groups_info}")
 
     print(f"\nMode: {'Replace' if args.replace else 'Append'} groups")
     
@@ -287,11 +297,11 @@ def main():
                 args.debug
             )
             final_groups = [groups_lookup.get(gid, gid) for gid in final_group_ids]
-            print(f"[{idx}/{total_models}][#{original_num}] Updating {model['name']}: {status_message}")
+            print(f"[{idx}/{total_models}][#{original_num}] Updating [{model['id']}] {model['name']}: {status_message}")
             if status_message in ["Success", "Already exists"]:
                 print(f"  Final groups: {', '.join(final_groups)}")
         except requests.exceptions.RequestException as e:
-            print(f"[{idx}/{total_models}][#{original_num}] Error updating {model['name']}: {e}")
+            print(f"[{idx}/{total_models}][#{original_num}] Error updating [{model['id']}] {model['name']}: {e}")
 
 if __name__ == "__main__":
     main()
