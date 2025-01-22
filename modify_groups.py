@@ -107,35 +107,36 @@ def get_models(show_disabled=False):
     return filtered_models
 
 def update_model_acl(model, new_group_ids, replace=False, debug=False):
-    model_data = {
-        'id': model['id'],
-        'base_model_id': None,
-        'name': model['name'],
-        'meta': {
-            'profile_image_url': '/static/favicon.png',
-            'description': '',
-            'suggestion_prompts': None,
-            'tags': [],
-            'capabilities': {
-                'vision': True,
-                'citations': True
-            },
-            'toolIds': ['web_search']
-        },
-        'params': {},
-        'object': model['object'],
-        'created': model['created'],
-        'owned_by': model['owned_by'],
-        'is_active': True
+    """
+    Update model access control list while preserving all existing model parameters
+    """
+    # Get current model state first
+    response = requests.get(
+        f"{BASE_URL}/api/v1/models/model?id={urllib.parse.quote(model['id'])}",
+        headers=headers,
+        proxies=proxies
+    )
+    
+    if response.status_code != 200:
+        return False, [], f"Failed to get current model state: {response.status_code}"
+        
+    current_model = response.json()
+    
+    # Create model_data based on current state
+    model_data = current_model.copy()
+    
+    # Update access control while preserving other fields
+    default_access_control = {
+        'read': {'group_ids': [], 'user_ids': []},
+        'write': {'group_ids': [], 'user_ids': []}
     }
     
-    if 'pipe' in model:
-        model_data['pipe'] = model['pipe']
-    
     if replace:
+        # Replace mode: use new groups
         read_group_ids = new_group_ids
     else:
-        current_group_ids = (model.get('access_control', {})
+        # Append mode: combine existing and new groups
+        current_group_ids = (model_data.get('access_control', default_access_control)
                            .get('read', {})
                            .get('group_ids', []))
         read_group_ids = list(set(current_group_ids + new_group_ids))
@@ -145,11 +146,10 @@ def update_model_acl(model, new_group_ids, replace=False, debug=False):
         'write': {'group_ids': [], 'user_ids': []}
     }
     
-    # Добавляем текущее время для updated_at и created_at
+    # Update timestamps
     current_timestamp = int(time.time())
     model_data.update({
-        'updated_at': current_timestamp,
-        'created_at': current_timestamp
+        'updated_at': current_timestamp
     })
     
     if debug:
@@ -175,6 +175,7 @@ def update_model_acl(model, new_group_ids, replace=False, debug=False):
     
     success = response.status_code == 200
     return success, read_group_ids, "Success" if success else "Failed"
+
 
 def main():
     args = parse_args()
